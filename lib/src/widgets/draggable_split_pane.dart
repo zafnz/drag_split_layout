@@ -6,6 +6,47 @@ import 'package:drag_split_layout/src/widgets/drop_preview_overlay.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+/// Provides the drag handle widget to descendant widgets.
+///
+/// When [DraggablePaneConfig.dragHandleBuilder] is used, this InheritedWidget
+/// makes the draggable handle available to child widgets so they can place it
+/// in their UI (e.g., in a panel header).
+///
+/// Use [DragHandleProvider.of] to retrieve the drag handle from a descendant.
+class DragHandleProvider extends InheritedWidget {
+  /// Creates a [DragHandleProvider].
+  const DragHandleProvider({
+    required this.dragHandle,
+    required super.child,
+    super.key,
+  });
+
+  /// The draggable handle widget.
+  ///
+  /// This widget should be placed in the panel's UI where the user can
+  /// drag from (typically in a header).
+  final Widget dragHandle;
+
+  /// Retrieves the [DragHandleProvider] from the given context.
+  ///
+  /// Returns null if no provider is found in the widget tree.
+  static DragHandleProvider? of(BuildContext context) {
+    return context.dependOnInheritedWidgetOfExactType<DragHandleProvider>();
+  }
+
+  /// Retrieves just the drag handle widget from the given context.
+  ///
+  /// Returns null if no provider is found in the widget tree.
+  static Widget? handleOf(BuildContext context) {
+    return of(context)?.dragHandle;
+  }
+
+  @override
+  bool updateShouldNotify(DragHandleProvider oldWidget) {
+    return dragHandle != oldWidget.dragHandle;
+  }
+}
+
 /// Configuration for the draggable pane behavior and appearance.
 class DraggablePaneConfig {
   /// Creates a new draggable pane configuration.
@@ -125,6 +166,15 @@ class _DraggableSplitPaneState extends State<DraggableSplitPane> {
       child: widget.child,
     );
 
+    final dragHandleBuilder = widget.config.dragHandleBuilder;
+
+    // If a drag handle builder is provided, only the handle is draggable.
+    // Otherwise, the entire pane is draggable.
+    if (dragHandleBuilder != null) {
+      return _buildContentWithDragHandle(context, content, dragHandleBuilder);
+    }
+
+    // Default behavior: entire pane is draggable
     Widget draggableContent;
 
     if (_useLongPress) {
@@ -154,6 +204,70 @@ class _DraggableSplitPaneState extends State<DraggableSplitPane> {
       fit: StackFit.expand,
       children: [
         draggableContent,
+        if (_isDragTarget)
+          ListenableBuilder(
+            listenable: widget.controller,
+            builder: (context, _) {
+              final preview = widget.controller.preview;
+              if (preview?.targetNodeId != widget.nodeId) {
+                return const SizedBox.shrink();
+              }
+              return DropPreviewOverlay(
+                preview: preview,
+                style: widget.config.previewStyle,
+              );
+            },
+          ),
+      ],
+    );
+  }
+
+  /// Builds content where only the drag handle is draggable.
+  ///
+  /// The drag handle widget is wrapped in a Draggable, while the main content
+  /// remains static. The handle builder is responsible for positioning the
+  /// handle within the pane (e.g., in a header).
+  Widget _buildContentWithDragHandle(
+    BuildContext context,
+    Widget content,
+    Widget Function(BuildContext context) handleBuilder,
+  ) {
+    // Build the draggable handle
+    final handle = handleBuilder(context);
+
+    Widget draggableHandle;
+    if (_useLongPress) {
+      draggableHandle = LongPressDraggable<DragItemModel>(
+        data: _dragData,
+        delay: widget.config.longPressDuration,
+        feedback: _buildDragFeedback(context),
+        childWhenDragging: handle, // Keep handle visible while dragging
+        onDragStarted: _onDragStarted,
+        onDragEnd: _onDragEnd,
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        child: handle,
+      );
+    } else {
+      draggableHandle = Draggable<DragItemModel>(
+        data: _dragData,
+        feedback: _buildDragFeedback(context),
+        childWhenDragging: handle, // Keep handle visible while dragging
+        onDragStarted: _onDragStarted,
+        onDragEnd: _onDragEnd,
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        child: handle,
+      );
+    }
+
+    // Provide the draggable handle via InheritedWidget so the child can
+    // place it wherever needed (typically in a header).
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        DragHandleProvider(
+          dragHandle: draggableHandle,
+          child: content,
+        ),
         if (_isDragTarget)
           ListenableBuilder(
             listenable: widget.controller,
