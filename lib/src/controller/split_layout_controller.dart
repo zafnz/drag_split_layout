@@ -6,6 +6,36 @@ import 'package:drag_split_layout/src/model/split_node.dart';
 import 'package:drag_split_layout/src/utils/hover_zone_detector.dart';
 import 'package:flutter/foundation.dart';
 
+/// Result of a replace interception callback.
+///
+/// Used by [SplitLayoutController.onBeforeReplace] to control what happens
+/// when a replace drop action is about to occur.
+enum ReplaceInterceptResult {
+  /// Allow the replace to proceed normally.
+  allow,
+
+  /// Cancel the replace entirely (no action taken).
+  cancel,
+
+  /// The callback handled the replace itself (e.g., merged panels).
+  /// The controller will clean up state but not perform the default replace.
+  handled,
+}
+
+/// Callback type for intercepting replace actions.
+///
+/// Called before a replace drop action is executed. The callback receives:
+/// - [draggedItem]: The item being dragged
+/// - [targetNodeId]: The ID of the node being replaced
+/// - [preview]: The full drop preview model
+///
+/// Return [ReplaceInterceptResult] to control what happens next.
+typedef ReplaceInterceptCallback = ReplaceInterceptResult Function(
+  DragItemModel draggedItem,
+  String targetNodeId,
+  DropPreviewModel preview,
+);
+
 /// Controller responsible for managing the split layout tree structure
 /// and handling drag-and-drop operations.
 ///
@@ -16,13 +46,21 @@ class SplitLayoutController extends ChangeNotifier {
   ///
   /// [rootNode] is the initial root of the layout tree.
   /// [zoneDetector] is used for detecting hover zones (defaults to standard detector).
+  /// [onBeforeReplace] is called before a replace action to allow interception.
   SplitLayoutController({
     required SplitNode rootNode,
     HoverZoneDetector? zoneDetector,
+    this.onBeforeReplace,
   })  : _rootNode = rootNode,
         _zoneDetector = zoneDetector ?? const HoverZoneDetector();
 
   final HoverZoneDetector _zoneDetector;
+
+  /// Callback invoked before a replace action is executed.
+  ///
+  /// Use this to intercept replace actions and handle them differently,
+  /// such as merging panels instead of replacing them.
+  ReplaceInterceptCallback? onBeforeReplace;
 
   SplitNode _rootNode;
   DropPreviewModel? _preview;
@@ -135,6 +173,32 @@ class SplitLayoutController extends ChangeNotifier {
     if (draggedItem.id == preview.targetNodeId) {
       clearPreview();
       return false;
+    }
+
+    // Handle replace actions with interception
+    if (preview.action == DropAction.replace && onBeforeReplace != null) {
+      final result = onBeforeReplace!(
+        draggedItem,
+        preview.targetNodeId,
+        preview,
+      );
+
+      switch (result) {
+        case ReplaceInterceptResult.cancel:
+          clearPreview();
+          _activeDragItem = null;
+          notifyListeners();
+          return false;
+        case ReplaceInterceptResult.handled:
+          // Callback handled it - just clean up state
+          clearPreview();
+          _activeDragItem = null;
+          notifyListeners();
+          return true;
+        case ReplaceInterceptResult.allow:
+          // Continue with normal replace
+          break;
+      }
     }
 
     final newNode = newNodeBuilder();
