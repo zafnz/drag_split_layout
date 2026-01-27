@@ -192,6 +192,242 @@ void main() {
       controller.clearPreview();
       expect(controller.preview, isNull);
     });
+
+    group('onBeforeReplace callback', () {
+      SplitNode createTwoLeafBranch() {
+        return SplitNode.branch(
+          id: 'root',
+          axis: SplitAxis.horizontal,
+          children: [
+            SplitNode.leaf(
+              id: 'leaf1',
+              widgetBuilder: (_) => const SizedBox(),
+            ),
+            SplitNode.leaf(
+              id: 'leaf2',
+              widgetBuilder: (_) => const SizedBox(),
+            ),
+          ],
+        );
+      }
+
+      void setupReplacePreview(SplitLayoutController controller) {
+        // Start a drag operation
+        controller.onDragStart(
+          const DragItemModel(
+            id: 'leaf1',
+            widgetType: 'pane',
+            originalPath: [0],
+          ),
+        );
+
+        // Hover in the center of leaf2 to trigger replace preview
+        controller.onHoverUpdate(
+          localPosition: const Offset(50, 50),
+          paneSize: const Size(100, 100),
+          targetNodeId: 'leaf2',
+          targetNodePath: [1],
+        );
+      }
+
+      test('onBeforeReplace callback is called for replace actions', () {
+        var callbackInvoked = false;
+        String? capturedTargetId;
+
+        final controller = SplitLayoutController(
+          rootNode: createTwoLeafBranch(),
+          onBeforeReplace: (draggedItem, targetNodeId, preview) {
+            callbackInvoked = true;
+            capturedTargetId = targetNodeId;
+            return ReplaceInterceptResult.allow;
+          },
+        );
+
+        setupReplacePreview(controller);
+
+        // Verify we have a replace preview
+        expect(controller.preview, isNotNull);
+        expect(controller.preview!.action, equals(DropAction.replace));
+
+        // Execute the drop
+        controller.onDrop(
+          draggedItem: const DragItemModel(
+            id: 'leaf1',
+            widgetType: 'pane',
+            originalPath: [0],
+          ),
+          newNodeBuilder: () => SplitNode.leaf(
+            id: 'new_leaf',
+            widgetBuilder: (_) => const SizedBox(),
+          ),
+        );
+
+        expect(callbackInvoked, isTrue);
+        expect(capturedTargetId, equals('leaf2'));
+      });
+
+      test('ReplaceInterceptResult.cancel prevents replace action', () {
+        final controller = SplitLayoutController(
+          rootNode: createTwoLeafBranch(),
+          onBeforeReplace: (_, __, ___) => ReplaceInterceptResult.cancel,
+        );
+
+        setupReplacePreview(controller);
+
+        // Try to execute the drop
+        final result = controller.onDrop(
+          draggedItem: const DragItemModel(
+            id: 'leaf1',
+            widgetType: 'pane',
+            originalPath: [0],
+          ),
+          newNodeBuilder: () => SplitNode.leaf(
+            id: 'new_leaf',
+            widgetBuilder: (_) => const SizedBox(),
+          ),
+        );
+
+        // Drop should be cancelled
+        expect(result, isFalse);
+        // Original structure should be unchanged
+        expect(controller.rootNode.children.length, equals(2));
+        expect(controller.rootNode.children[0].id, equals('leaf1'));
+        expect(controller.rootNode.children[1].id, equals('leaf2'));
+      });
+
+      test('ReplaceInterceptResult.handled cleans up state without replacing', () {
+        var handlerCalled = false;
+
+        final controller = SplitLayoutController(
+          rootNode: createTwoLeafBranch(),
+          onBeforeReplace: (_, __, ___) {
+            handlerCalled = true;
+            return ReplaceInterceptResult.handled;
+          },
+        );
+
+        setupReplacePreview(controller);
+
+        final result = controller.onDrop(
+          draggedItem: const DragItemModel(
+            id: 'leaf1',
+            widgetType: 'pane',
+            originalPath: [0],
+          ),
+          newNodeBuilder: () => SplitNode.leaf(
+            id: 'new_leaf',
+            widgetBuilder: (_) => const SizedBox(),
+          ),
+        );
+
+        // Drop should report as successful
+        expect(result, isTrue);
+        expect(handlerCalled, isTrue);
+        // Original structure should be unchanged (handler took care of it)
+        expect(controller.rootNode.children.length, equals(2));
+        expect(controller.rootNode.children[0].id, equals('leaf1'));
+        expect(controller.rootNode.children[1].id, equals('leaf2'));
+        // State should be cleaned up
+        expect(controller.preview, isNull);
+        expect(controller.activeDragItem, isNull);
+      });
+
+      test('ReplaceInterceptResult.allow proceeds with normal replace', () {
+        final controller = SplitLayoutController(
+          rootNode: createTwoLeafBranch(),
+          onBeforeReplace: (_, __, ___) => ReplaceInterceptResult.allow,
+        );
+
+        setupReplacePreview(controller);
+
+        final result = controller.onDrop(
+          draggedItem: const DragItemModel(
+            id: 'external',
+            widgetType: 'pane',
+            originalPath: [], // New item, not from tree
+          ),
+          newNodeBuilder: () => SplitNode.leaf(
+            id: 'new_leaf',
+            widgetBuilder: (_) => const SizedBox(),
+          ),
+        );
+
+        // Drop should succeed
+        expect(result, isTrue);
+        // leaf2 should be replaced with new_leaf
+        expect(controller.rootNode.children[1].id, equals('new_leaf'));
+      });
+
+      test('split actions bypass onBeforeReplace callback', () {
+        var callbackInvoked = false;
+
+        final controller = SplitLayoutController(
+          rootNode: createTwoLeafBranch(),
+          onBeforeReplace: (_, __, ___) {
+            callbackInvoked = true;
+            return ReplaceInterceptResult.cancel;
+          },
+        );
+
+        // Start a drag operation
+        controller.onDragStart(
+          const DragItemModel(
+            id: 'leaf1',
+            widgetType: 'pane',
+            originalPath: [0],
+          ),
+        );
+
+        // Hover on the left edge (split zone, not replace)
+        controller.onHoverUpdate(
+          localPosition: const Offset(5, 50),
+          paneSize: const Size(100, 100),
+          targetNodeId: 'leaf2',
+          targetNodePath: [1],
+        );
+
+        expect(controller.preview!.action, equals(DropAction.split));
+
+        controller.onDrop(
+          draggedItem: const DragItemModel(
+            id: 'external',
+            widgetType: 'pane',
+            originalPath: [],
+          ),
+          newNodeBuilder: () => SplitNode.leaf(
+            id: 'new_leaf',
+            widgetBuilder: (_) => const SizedBox(),
+          ),
+        );
+
+        // Callback should not be invoked for split actions
+        expect(callbackInvoked, isFalse);
+      });
+
+      test('no callback means replace proceeds normally', () {
+        final controller = SplitLayoutController(
+          rootNode: createTwoLeafBranch(),
+          // No onBeforeReplace callback
+        );
+
+        setupReplacePreview(controller);
+
+        final result = controller.onDrop(
+          draggedItem: const DragItemModel(
+            id: 'external',
+            widgetType: 'pane',
+            originalPath: [],
+          ),
+          newNodeBuilder: () => SplitNode.leaf(
+            id: 'new_leaf',
+            widgetBuilder: (_) => const SizedBox(),
+          ),
+        );
+
+        expect(result, isTrue);
+        expect(controller.rootNode.children[1].id, equals('new_leaf'));
+      });
+    });
   });
 
   group('DragItemModel', () {
