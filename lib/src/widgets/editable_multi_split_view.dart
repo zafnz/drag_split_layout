@@ -3,6 +3,7 @@ import 'package:drag_split_layout/src/model/drag_item_model.dart';
 import 'package:drag_split_layout/src/model/drop_preview_model.dart';
 import 'package:drag_split_layout/src/model/split_node.dart';
 import 'package:drag_split_layout/src/widgets/draggable_split_pane.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:multi_split_view/multi_split_view.dart';
 
@@ -70,22 +71,66 @@ class _EditableMultiSplitViewState extends State<EditableMultiSplitView> {
   final Map<String, MultiSplitViewController> _controllers = {};
   Set<String> _usedControllerIds = {};
 
+  /// Controllers evicted due to tree restructuring, awaiting disposal.
+  ///
+  /// These cannot be disposed immediately because old [MultiSplitView] widgets
+  /// still reference them until Flutter's element lifecycle calls `deactivate`.
+  final List<MultiSplitViewController> _orphanedControllers = [];
+
   @override
   void dispose() {
     for (final controller in _controllers.values) {
       controller.dispose();
     }
+    for (final controller in _orphanedControllers) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
-  void _cleanupUnusedControllers() {
-    final unusedIds = _controllers.keys
-        .where((id) => !_usedControllerIds.contains(id))
-        .toList();
+  void _cleanupControllers() {
+    // Dispose orphaned controllers from previous tree restructures
+    for (final controller in _orphanedControllers) {
+      controller.dispose();
+    }
+    _orphanedControllers.clear();
+
+    // Dispose controllers no longer referenced by any branch node
+    final unusedIds = _controllers.keys.where((id) => !_usedControllerIds.contains(id)).toList();
     for (final id in unusedIds) {
       _controllers[id]?.dispose();
       _controllers.remove(id);
     }
+  }
+
+  /// Evicts all cached controllers when the tree's branch structure changes.
+  ///
+  /// During drag operations, multiple `notifyListeners` calls can fire in the
+  /// same frame (e.g. `removeNode` then `updateRootNode`). The old
+  /// [MultiSplitView] widgets haven't been deactivated yet, so their
+  /// controllers still have a `_stateHashCode` set. Reusing those controllers
+  /// for new [MultiSplitView] instances triggers a "shared controller" error.
+  ///
+  /// By evicting all controllers when branch IDs change, we force fresh
+  /// controllers to be created for the new tree structure.
+  void _evictControllersIfTreeChanged(SplitNode rootNode) {
+    final currentBranchIds = _collectBranchIds(rootNode);
+    if (!setEquals(currentBranchIds, _controllers.keys.toSet())) {
+      _orphanedControllers.addAll(_controllers.values);
+      _controllers.clear();
+    }
+  }
+
+  /// Collects all branch node IDs from the tree.
+  Set<String> _collectBranchIds(SplitNode node) {
+    final ids = <String>{};
+    if (node.isBranch) {
+      ids.add(node.id);
+      for (final child in node.children) {
+        ids.addAll(_collectBranchIds(child));
+      }
+    }
+    return ids;
   }
 
   @override
@@ -93,16 +138,12 @@ class _EditableMultiSplitViewState extends State<EditableMultiSplitView> {
     return ListenableBuilder(
       listenable: widget.controller,
       builder: (context, _) {
-        // Track which controllers are used in this build
         _usedControllerIds = {};
-        final result = _buildNode(
-          widget.controller.rootNode,
-          [],
-        );
-        // Schedule cleanup of unused controllers after frame
+        _evictControllersIfTreeChanged(widget.controller.rootNode);
+        final result = _buildNode(widget.controller.rootNode, []);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            _cleanupUnusedControllers();
+            _cleanupControllers();
           }
         });
         return result;
