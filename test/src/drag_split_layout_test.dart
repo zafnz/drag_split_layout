@@ -68,6 +68,235 @@ void main() {
       expect(branch.nodeAtPath([1])?.id, equals('leaf2'));
       expect(branch.nodeAtPath([2]), isNull);
     });
+
+    group('toJson', () {
+      test('serializes leaf node correctly', () {
+        final leaf = SplitNode.leaf(
+          id: 'test_leaf',
+          flex: 2.5,
+          widgetBuilder: (_) => const SizedBox(),
+        );
+
+        final json = leaf.toJson();
+
+        expect(json['id'], equals('test_leaf'));
+        expect(json['flex'], equals(2.5));
+        expect(json.containsKey('axis'), isFalse);
+        expect(json.containsKey('children'), isFalse);
+      });
+
+      test('serializes branch node correctly', () {
+        final leaf1 = SplitNode.leaf(
+          id: 'leaf1',
+          flex: 1.0,
+          widgetBuilder: (_) => const SizedBox(),
+        );
+        final leaf2 = SplitNode.leaf(
+          id: 'leaf2',
+          flex: 2.0,
+          widgetBuilder: (_) => const SizedBox(),
+        );
+        final branch = SplitNode.branch(
+          id: 'branch',
+          axis: SplitAxis.horizontal,
+          flex: 3.0,
+          children: [leaf1, leaf2],
+        );
+
+        final json = branch.toJson();
+
+        expect(json['id'], equals('branch'));
+        expect(json['axis'], equals('horizontal'));
+        expect(json['flex'], equals(3.0));
+        expect(json['children'], isA<List>());
+        expect((json['children'] as List).length, equals(2));
+        expect((json['children'] as List)[0]['id'], equals('leaf1'));
+        expect((json['children'] as List)[1]['id'], equals('leaf2'));
+      });
+
+      test('serializes nested tree correctly', () {
+        final leaf1 = SplitNode.leaf(id: 'leaf1', widgetBuilder: (_) => const SizedBox());
+        final leaf2 = SplitNode.leaf(id: 'leaf2', widgetBuilder: (_) => const SizedBox());
+        final innerBranch = SplitNode.branch(
+          id: 'inner',
+          axis: SplitAxis.vertical,
+          children: [leaf1, leaf2],
+        );
+        final leaf3 = SplitNode.leaf(id: 'leaf3', widgetBuilder: (_) => const SizedBox());
+        final root = SplitNode.branch(
+          id: 'root',
+          axis: SplitAxis.horizontal,
+          children: [innerBranch, leaf3],
+        );
+
+        final json = root.toJson();
+
+        expect(json['id'], equals('root'));
+        expect(json['axis'], equals('horizontal'));
+        final children = json['children'] as List;
+        expect(children.length, equals(2));
+        expect(children[0]['id'], equals('inner'));
+        expect(children[0]['axis'], equals('vertical'));
+        expect((children[0]['children'] as List).length, equals(2));
+        expect(children[1]['id'], equals('leaf3'));
+      });
+    });
+
+    group('fromJson', () {
+      Widget Function(BuildContext)? testResolver(String id) {
+        return (context) => Text(id);
+      }
+
+      test('deserializes leaf node correctly', () {
+        final json = {'id': 'test_leaf', 'flex': 2.5};
+
+        final node = SplitNode.fromJson(json, testResolver);
+
+        expect(node, isNotNull);
+        expect(node!.isLeaf, isTrue);
+        expect(node.id, equals('test_leaf'));
+        expect(node.flex, equals(2.5));
+      });
+
+      test('deserializes leaf node with default flex', () {
+        final json = {'id': 'test_leaf'};
+
+        final node = SplitNode.fromJson(json, testResolver);
+
+        expect(node, isNotNull);
+        expect(node!.flex, equals(1.0));
+      });
+
+      test('deserializes branch node correctly', () {
+        final json = {
+          'id': 'branch',
+          'axis': 'horizontal',
+          'flex': 3.0,
+          'children': [
+            {'id': 'leaf1', 'flex': 1.0},
+            {'id': 'leaf2', 'flex': 2.0},
+          ],
+        };
+
+        final node = SplitNode.fromJson(json, testResolver);
+
+        expect(node, isNotNull);
+        expect(node!.isBranch, isTrue);
+        expect(node.id, equals('branch'));
+        expect(node.axis, equals(SplitAxis.horizontal));
+        expect(node.flex, equals(3.0));
+        expect(node.children.length, equals(2));
+        expect(node.children[0].id, equals('leaf1'));
+        expect(node.children[1].id, equals('leaf2'));
+      });
+
+      test('deserializes vertical axis correctly', () {
+        final json = {
+          'id': 'branch',
+          'axis': 'vertical',
+          'children': [
+            {'id': 'leaf1'},
+          ],
+        };
+
+        final node = SplitNode.fromJson(json, testResolver);
+
+        expect(node, isNotNull);
+        expect(node!.axis, equals(SplitAxis.vertical));
+      });
+
+      test('returns null for missing id', () {
+        final json = {'flex': 1.0};
+
+        final node = SplitNode.fromJson(json, testResolver);
+
+        expect(node, isNull);
+      });
+
+      test('returns null for invalid axis', () {
+        final json = {
+          'id': 'branch',
+          'axis': 'diagonal',
+          'children': [{'id': 'leaf1'}],
+        };
+
+        final node = SplitNode.fromJson(json, testResolver);
+
+        expect(node, isNull);
+      });
+
+      test('returns null for unrecognized leaf id', () {
+        final json = {'id': 'unknown'};
+
+        final node = SplitNode.fromJson(json, (id) => null);
+
+        expect(node, isNull);
+      });
+
+      test('returns null for empty children array', () {
+        final json = {
+          'id': 'branch',
+          'axis': 'horizontal',
+          'children': <Map<String, dynamic>>[],
+        };
+
+        final node = SplitNode.fromJson(json, testResolver);
+
+        expect(node, isNull);
+      });
+
+      test('returns null for invalid child', () {
+        final json = {
+          'id': 'branch',
+          'axis': 'horizontal',
+          'children': [
+            {'id': 'leaf1'},
+            {'flex': 1.0}, // Missing id
+          ],
+        };
+
+        final node = SplitNode.fromJson(json, testResolver);
+
+        expect(node, isNull);
+      });
+
+      test('round-trip serialization preserves structure', () {
+        final original = SplitNode.branch(
+          id: 'root',
+          axis: SplitAxis.horizontal,
+          flex: 1.5,
+          children: [
+            SplitNode.branch(
+              id: 'left',
+              axis: SplitAxis.vertical,
+              flex: 2.0,
+              children: [
+                SplitNode.leaf(id: 'leaf1', flex: 1.0, widgetBuilder: (_) => const SizedBox()),
+                SplitNode.leaf(id: 'leaf2', flex: 3.0, widgetBuilder: (_) => const SizedBox()),
+              ],
+            ),
+            SplitNode.leaf(id: 'leaf3', flex: 4.0, widgetBuilder: (_) => const SizedBox()),
+          ],
+        );
+
+        final json = original.toJson();
+        final restored = SplitNode.fromJson(json, testResolver);
+
+        expect(restored, isNotNull);
+        expect(restored!.id, equals(original.id));
+        expect(restored.axis, equals(original.axis));
+        expect(restored.flex, equals(original.flex));
+        expect(restored.children.length, equals(original.children.length));
+        expect(restored.children[0].id, equals('left'));
+        expect(restored.children[0].axis, equals(SplitAxis.vertical));
+        expect(restored.children[0].children[0].id, equals('leaf1'));
+        expect(restored.children[0].children[0].flex, equals(1.0));
+        expect(restored.children[0].children[1].id, equals('leaf2'));
+        expect(restored.children[0].children[1].flex, equals(3.0));
+        expect(restored.children[1].id, equals('leaf3'));
+        expect(restored.children[1].flex, equals(4.0));
+      });
+    });
   });
 
   group('DropZone', () {

@@ -221,6 +221,79 @@ class SplitNode {
   @override
   int get hashCode => Object.hash(id, axis, flex, _isLeaf, Object.hashAll(children));
 
+  /// Converts this node to a JSON-serializable map.
+  ///
+  /// For leaf nodes, returns `{id, flex}`.
+  /// For branch nodes, returns `{id, axis, flex, children}`.
+  ///
+  /// Note: The [widgetBuilder] is not serialized. When deserializing,
+  /// use [fromJson] with a widget builder resolver.
+  Map<String, dynamic> toJson() {
+    if (isLeaf) {
+      return {
+        'id': id,
+        'flex': flex,
+      };
+    }
+    return {
+      'id': id,
+      'axis': axis!.name,
+      'flex': flex,
+      'children': children.map((c) => c.toJson()).toList(),
+    };
+  }
+
+  /// Creates a [SplitNode] from a JSON map.
+  ///
+  /// The [widgetBuilderResolver] is called for each leaf node to provide
+  /// the widget builder based on the node's id.
+  ///
+  /// Returns null if the JSON is invalid.
+  static SplitNode? fromJson(
+    Map<String, dynamic> json,
+    Widget Function(BuildContext)? Function(String id) widgetBuilderResolver,
+  ) {
+    final id = json['id'] as String?;
+    if (id == null) return null;
+
+    final flex = (json['flex'] as num?)?.toDouble() ?? 1.0;
+    final axisStr = json['axis'] as String?;
+    final childrenJson = json['children'] as List<dynamic>?;
+
+    // If has axis and children, it's a branch
+    if (axisStr != null && childrenJson != null) {
+      final axis = SplitAxis.values.where((a) => a.name == axisStr).firstOrNull;
+      if (axis == null) return null;
+
+      final children = <SplitNode>[];
+      for (final childJson in childrenJson) {
+        if (childJson is! Map<String, dynamic>) return null;
+        final child = fromJson(childJson, widgetBuilderResolver);
+        if (child == null) return null;
+        children.add(child);
+      }
+
+      if (children.isEmpty) return null;
+
+      return SplitNode.branch(
+        id: id,
+        axis: axis,
+        children: children,
+        flex: flex,
+      );
+    }
+
+    // Otherwise it's a leaf
+    final widgetBuilder = widgetBuilderResolver(id);
+    if (widgetBuilder == null) return null;
+
+    return SplitNode.leaf(
+      id: id,
+      widgetBuilder: widgetBuilder,
+      flex: flex,
+    );
+  }
+
   @override
   String toString() {
     if (isLeaf) {
