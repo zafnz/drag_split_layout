@@ -12,13 +12,21 @@ class EditableMultiSplitViewConfig {
   /// Creates a new configuration.
   const EditableMultiSplitViewConfig({
     this.dividerThickness = 8.0,
+    this.dividerHandleBuffer = 0.0,
     this.dividerPainter,
     this.antiAliasingWorkaround = true,
     this.paneConfig = const DraggablePaneConfig(),
   });
 
-  /// The thickness of dividers between panes.
+  /// The visual thickness of dividers between panes.
   final double dividerThickness;
+
+  /// Additional clickable area around the divider.
+  ///
+  /// This allows having a thin visual divider but a larger draggable area.
+  /// For example, with dividerThickness=2 and dividerHandleBuffer=4,
+  /// the visual divider is 2px but the draggable area is 10px (2 + 4*2).
+  final double dividerHandleBuffer;
 
   /// Custom divider painter. If null, uses default styling.
   final DividerPainter? dividerPainter;
@@ -43,6 +51,7 @@ class EditableMultiSplitView extends StatefulWidget {
     this.config = const EditableMultiSplitViewConfig(),
     this.widgetTypeResolver,
     this.onNodeDropped,
+    this.onDividerDragEnd,
   });
 
   /// The controller managing the layout tree.
@@ -62,6 +71,10 @@ class EditableMultiSplitView extends StatefulWidget {
     DropPreviewModel preview,
     SplitNode targetNode,
   )? onNodeDropped;
+
+  /// Called after a divider drag ends and flex values have been synced
+  /// back to the [SplitNode] tree.
+  final VoidCallback? onDividerDragEnd;
 
   @override
   State<EditableMultiSplitView> createState() => _EditableMultiSplitViewState();
@@ -199,7 +212,7 @@ class _EditableMultiSplitViewState extends State<EditableMultiSplitView> {
       controller.areas = areas;
     }
 
-    return MultiSplitView(
+    final splitView = MultiSplitView(
       key: ValueKey('msv_${node.id}'),
       controller: controller,
       axis: node.axis!.toAxis(),
@@ -219,6 +232,15 @@ class _EditableMultiSplitViewState extends State<EditableMultiSplitView> {
           highlighted,
         );
       },
+      onDividerDragEnd: widget.onDividerDragEnd != null
+          ? (_) {
+              widget.controller.syncFlexValues(
+                node.id,
+                controller.areas,
+              );
+              widget.onDividerDragEnd!();
+            }
+          : null,
       antiAliasingWorkaround: widget.config.antiAliasingWorkaround,
       builder: (context, area) {
         // Find the index of this area in the controller
@@ -230,6 +252,19 @@ class _EditableMultiSplitViewState extends State<EditableMultiSplitView> {
         return _buildNode(node.children[index], childPath);
       },
     );
+
+    // Wrap with theme if we need a handle buffer
+    if (widget.config.dividerHandleBuffer > 0) {
+      return MultiSplitViewTheme(
+        data: MultiSplitViewThemeData(
+          dividerThickness: widget.config.dividerThickness,
+          dividerHandleBuffer: widget.config.dividerHandleBuffer,
+        ),
+        child: splitView,
+      );
+    }
+
+    return splitView;
   }
 
   MultiSplitViewController _getOrCreateController(SplitNode node) {
