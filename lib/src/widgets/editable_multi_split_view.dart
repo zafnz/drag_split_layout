@@ -204,7 +204,9 @@ class _EditableMultiSplitViewState extends State<EditableMultiSplitView> {
 
     // Calculate areas from flex values
     final areas = node.children.map((child) {
-      return Area(flex: child.flex);
+      return child.size != null
+          ? Area(size: child.size, min: child.minSize, max: child.maxSize)
+          : Area(flex: child.flex, min: child.minSize, max: child.maxSize);
     }).toList();
 
     // Update controller areas if they don't match
@@ -273,7 +275,9 @@ class _EditableMultiSplitViewState extends State<EditableMultiSplitView> {
 
     if (!_controllers.containsKey(node.id)) {
       final areas = node.children.map((child) {
-        return Area(flex: child.flex);
+        return child.size != null
+          ? Area(size: child.size, min: child.minSize, max: child.maxSize)
+          : Area(flex: child.flex, min: child.minSize, max: child.maxSize);
       }).toList();
 
       _controllers[node.id] = MultiSplitViewController(areas: areas);
@@ -411,9 +415,16 @@ extension SplitLayoutControllerExtensions on SplitLayoutController {
 
     final updatedChildren = <SplitNode>[];
     for (var i = 0; i < node.children.length; i++) {
-      updatedChildren.add(
-        node.children[i].copyWith(flex: areas[i].flex ?? 1.0),
-      );
+      final area = areas[i];
+      if (area.size != null) {
+        updatedChildren.add(
+          node.children[i].copyWith(size: () => area.size),
+        );
+      } else {
+        updatedChildren.add(
+          node.children[i].copyWith(flex: area.flex ?? 1.0),
+        );
+      }
     }
 
     final updatedNode = node.copyWith(children: updatedChildren);

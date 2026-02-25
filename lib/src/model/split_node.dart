@@ -27,20 +27,33 @@ enum SplitAxis {
 @immutable
 class SplitNode {
   /// Creates a leaf node containing a single widget.
+  ///
+  /// Use [flex] for proportional sizing or [size] for fixed pixel sizing.
+  /// If [size] is provided, [flex] is ignored. When using [size], [minSize]
+  /// and [maxSize] constrain the pixel size.
   const SplitNode.leaf({
     required this.id,
     required this.widgetBuilder,
     this.flex = 1.0,
+    this.size,
+    this.minSize,
+    this.maxSize,
   })  : axis = null,
         children = const [],
         _isLeaf = true;
 
   /// Creates a branch node containing multiple child nodes.
+  ///
+  /// Use [flex] for proportional sizing or [size] for fixed pixel sizing.
+  /// If [size] is provided, [flex] is ignored.
   const SplitNode.branch({
     required this.id,
     required this.axis,
     required this.children,
     this.flex = 1.0,
+    this.size,
+    this.minSize,
+    this.maxSize,
   })  : widgetBuilder = null,
         _isLeaf = false;
 
@@ -56,8 +69,21 @@ class SplitNode {
   /// Builder function for the widget content (null for branch nodes)
   final Widget Function(BuildContext context)? widgetBuilder;
 
-  /// The flex weight for this node in its parent's layout
+  /// The flex weight for this node in its parent's layout.
+  /// Ignored when [size] is set.
   final double flex;
+
+  /// Fixed pixel size for this node's area.
+  /// When set, [flex] is ignored and the area uses pixel-based sizing.
+  final double? size;
+
+  /// Minimum size constraint for this node's area.
+  /// Applies to pixels when [size] is set, or to flex when using flex mode.
+  final double? minSize;
+
+  /// Maximum size constraint for this node's area.
+  /// Applies to pixels when [size] is set, or to flex when using flex mode.
+  final double? maxSize;
 
   final bool _isLeaf;
 
@@ -98,12 +124,18 @@ class SplitNode {
     List<SplitNode>? children,
     Widget Function(BuildContext context)? widgetBuilder,
     double? flex,
+    double? Function()? size,
+    double? Function()? minSize,
+    double? Function()? maxSize,
   }) {
     if (_isLeaf) {
       return SplitNode.leaf(
         id: id ?? this.id,
         widgetBuilder: widgetBuilder ?? this.widgetBuilder!,
         flex: flex ?? this.flex,
+        size: size != null ? size() : this.size,
+        minSize: minSize != null ? minSize() : this.minSize,
+        maxSize: maxSize != null ? maxSize() : this.maxSize,
       );
     } else {
       return SplitNode.branch(
@@ -111,6 +143,9 @@ class SplitNode {
         axis: axis ?? this.axis!,
         children: children ?? this.children,
         flex: flex ?? this.flex,
+        size: size != null ? size() : this.size,
+        minSize: minSize != null ? minSize() : this.minSize,
+        maxSize: maxSize != null ? maxSize() : this.maxSize,
       );
     }
   }
@@ -215,11 +250,14 @@ class SplitNode {
           id == other.id &&
           axis == other.axis &&
           flex == other.flex &&
+          size == other.size &&
+          minSize == other.minSize &&
+          maxSize == other.maxSize &&
           _isLeaf == other._isLeaf &&
           listEquals(children, other.children);
 
   @override
-  int get hashCode => Object.hash(id, axis, flex, _isLeaf, Object.hashAll(children));
+  int get hashCode => Object.hash(id, axis, flex, size, minSize, maxSize, _isLeaf, Object.hashAll(children));
 
   /// Converts this node to a JSON-serializable map.
   ///
@@ -232,13 +270,17 @@ class SplitNode {
     if (isLeaf) {
       return {
         'id': id,
-        'flex': flex,
+        if (size != null) 'size': size else 'flex': flex,
+        if (minSize != null) 'minSize': minSize,
+        if (maxSize != null) 'maxSize': maxSize,
       };
     }
     return {
       'id': id,
       'axis': axis!.name,
-      'flex': flex,
+      if (size != null) 'size': size else 'flex': flex,
+      if (minSize != null) 'minSize': minSize,
+      if (maxSize != null) 'maxSize': maxSize,
       'children': children.map((c) => c.toJson()).toList(),
     };
   }
@@ -257,6 +299,9 @@ class SplitNode {
     if (id == null) return null;
 
     final flex = (json['flex'] as num?)?.toDouble() ?? 1.0;
+    final size = (json['size'] as num?)?.toDouble();
+    final minSize = (json['minSize'] as num?)?.toDouble();
+    final maxSize = (json['maxSize'] as num?)?.toDouble();
     final axisStr = json['axis'] as String?;
     final childrenJson = json['children'] as List<dynamic>?;
 
@@ -280,6 +325,9 @@ class SplitNode {
         axis: axis,
         children: children,
         flex: flex,
+        size: size,
+        minSize: minSize,
+        maxSize: maxSize,
       );
     }
 
@@ -291,15 +339,24 @@ class SplitNode {
       id: id,
       widgetBuilder: widgetBuilder,
       flex: flex,
+      size: size,
+      minSize: minSize,
+      maxSize: maxSize,
     );
   }
 
   @override
   String toString() {
+    final sizeStr = size != null ? 'size: $size' : 'flex: $flex';
+    final extra = [
+      if (minSize != null) 'minSize: $minSize',
+      if (maxSize != null) 'maxSize: $maxSize',
+    ].join(', ');
+    final extraStr = extra.isNotEmpty ? ', $extra' : '';
     if (isLeaf) {
-      return 'SplitNode.leaf(id: $id, flex: $flex)';
+      return 'SplitNode.leaf(id: $id, $sizeStr$extraStr)';
     }
-    return 'SplitNode.branch(id: $id, axis: $axis, flex: $flex, '
+    return 'SplitNode.branch(id: $id, axis: $axis, $sizeStr$extraStr, '
         'children: $children)';
   }
 }
